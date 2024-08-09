@@ -10,14 +10,15 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartup"
+    "onStartup",
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "climbr.helloWorld",
-        "title": "Hello World"
+        "command": "climbr.startReminder",
+        "title": "Climbr - Stand Up Reminder "
       }
     ]
   },
