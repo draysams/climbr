@@ -1,15 +1,16 @@
 import * as vscode from 'vscode';
 
-export const DEFAULT_SITTING_INTERVAL = 1; // Updated sitting interval to 5 minutes for demonstration
+export const DEFAULT_SITTING_INTERVAL = 1;
 export const DEFAULT_STANDING_INTERVAL = 1;
 export function activate(context: vscode.ExtensionContext): void {
   const INACTIVE_THRESHOLD = 30;
+
   let sittingInterval: number =
     vscode.workspace.getConfiguration().get('climbr.sittingInterval') ??
-    DEFAULT_SITTING_INTERVAL; // Default to 5 minutes
+    DEFAULT_SITTING_INTERVAL;
   let standingInterval: number =
     vscode.workspace.getConfiguration().get('climbr.standingInterval') ??
-    DEFAULT_STANDING_INTERVAL; // Default to 1 minute
+    DEFAULT_STANDING_INTERVAL;
 
   let isUserActive = true;
   let lastActiveTime = Date.now();
@@ -18,6 +19,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   let isAlreadyStanding = false;
   let standingTimer: NodeJS.Timeout | undefined;
+  let reminderState: boolean = true;
+
   const getCurrentDateTime = (): string => {
     return new Date().toLocaleTimeString();
   };
@@ -30,16 +33,18 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   function updateStatusBar(minutes: number, isSitting: boolean): void {
-    if (statusBarItem) {
-      statusBarItem.text = getStatusBarText(minutes, isSitting);
-      statusBarItem.show();
-    } else {
-      statusBarItem = vscode.window.createStatusBarItem(
-        vscode.StatusBarAlignment.Left,
-        100
-      );
-      statusBarItem.text = getStatusBarText(minutes, isSitting);
-      statusBarItem.show();
+    if (reminderState) {
+      if (statusBarItem) {
+        statusBarItem.text = getStatusBarText(minutes, isSitting);
+        statusBarItem.show();
+      } else {
+        statusBarItem = vscode.window.createStatusBarItem(
+          vscode.StatusBarAlignment.Left,
+          100
+        );
+        statusBarItem.text = getStatusBarText(minutes, isSitting);
+        statusBarItem.show();
+      }
     }
   }
 
@@ -70,62 +75,69 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function resetStandingUpTimer(): void {
-    if (standingUpInterval) {
-      clearInterval(standingUpInterval);
-    }
-
-    let remainingMinutes = isUserActive
-      ? standingInterval
-      : Math.max(
-          0,
-          standingInterval - Math.floor((Date.now() - lastActiveTime) / 60000)
-        );
-    updateStatusBar(remainingMinutes, isAlreadyStanding);
-
-    standingUpInterval = setInterval(() => {
-      if (isUserActive) {
-        remainingMinutes--;
-        updateStatusBar(remainingMinutes, isAlreadyStanding);
-        if (remainingMinutes === 0) {
-          //current time in readable format
-
-          vscode.window.showInformationMessage(
-            `It's time to stand up! - @${getCurrentDateTime()}`
-          );
-          clearStatusBar();
-          startStandingTimer(); // Start the standing timer when the user stands up
-          resetStandingUpTimer();
-        }
+    if (reminderState) {
+      if (standingUpInterval) {
+        clearInterval(standingUpInterval);
       }
-      if (!isUserActive) {
-        if (Date.now() - lastActiveTime > INACTIVE_THRESHOLD * 60000) {
+
+      isUserActive = true;
+      lastActiveTime = Date.now();
+      let remainingMinutes = isUserActive
+        ? standingInterval
+        : Math.max(
+            0,
+            standingInterval - Math.floor((Date.now() - lastActiveTime) / 60000)
+          );
+      updateStatusBar(remainingMinutes, isAlreadyStanding);
+
+      standingUpInterval = setInterval(() => {
+        if (isUserActive) {
+          remainingMinutes--;
+          updateStatusBar(remainingMinutes, isAlreadyStanding);
+          if (remainingMinutes === 0) {
+            vscode.window.showInformationMessage(
+              `It's time to stand up! - @${getCurrentDateTime()}`
+            );
+            clearStatusBar();
+            startStandingTimer();
+            resetStandingUpTimer();
+          }
+        }
+        if (
+          !isUserActive &&
+          Date.now() - lastActiveTime > INACTIVE_THRESHOLD * 60000
+        ) {
           clearInterval(standingUpInterval);
         }
-      }
-    }, 60 * 1000); // Update the status bar every 1 minute
+      }, 60 * 1000); // Update the status bar every 1 minute
+    }
   }
 
   vscode.workspace.onDidChangeTextDocument(() => {
-    isUserActive = true;
-    lastActiveTime = Date.now();
-    clearStatusBar();
-    resetStandingUpTimer();
-    if (isAlreadyStanding) {
-      updateSitDownAlertTimer();
+    if (reminderState) {
+      isUserActive = true;
+      lastActiveTime = Date.now();
+      clearStatusBar();
+      if (isAlreadyStanding) {
+        updateSitDownAlertTimer();
+      } else {
+        resetStandingUpTimer();
+      }
     }
   });
 
   vscode.window.onDidChangeTextEditorSelection(() => {
-    isUserActive = true;
-    lastActiveTime = Date.now();
-    clearStatusBar();
-    resetStandingUpTimer();
-    if (isAlreadyStanding) {
-      updateSitDownAlertTimer();
+    if (reminderState) {
+      isUserActive = true;
+      lastActiveTime = Date.now();
+      clearStatusBar();
+      if (isAlreadyStanding) {
+        updateSitDownAlertTimer();
+      } else {
+        resetStandingUpTimer();
+      }
     }
   });
-
-  resetStandingUpTimer();
 
   vscode.workspace.onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration('climbr.sittingInterval')) {
@@ -133,6 +145,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.workspace.getConfiguration().get('climbr.sittingInterval') ??
         DEFAULT_SITTING_INTERVAL;
       clearStatusBar();
+      resetStandingUpTimer();
     }
     if (event.affectsConfiguration('climbr.standingInterval')) {
       standingInterval =
@@ -151,17 +164,47 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   });
 
-  let disposable = vscode.commands.registerCommand(
+  let disposableStart = vscode.commands.registerCommand(
     'climbr.startReminder',
     () => {
-      resetStandingUpTimer();
-      vscode.window.showInformationMessage(
-        `Stand-up reminder started! - @${getCurrentDateTime()}`
-      );
+      if (!reminderState) {
+        reminderState = true;
+        resetStandingUpTimer();
+        vscode.window.showInformationMessage(
+          `Stand-up reminder started! - @${getCurrentDateTime()}`
+        );
+      } else {
+        vscode.window.showInformationMessage(
+          'Stand up reminder is already running.'
+        );
+      }
     }
   );
 
-  context.subscriptions.push(disposable);
+  let disposableStop = vscode.commands.registerCommand(
+    'climbr.stopReminder',
+    () => {
+      if (reminderState) {
+        reminderState = false;
+        if (standingUpInterval) {
+          clearInterval(standingUpInterval);
+        }
+        if (standingTimer) {
+          clearInterval(standingTimer);
+        }
+        clearStatusBar();
+        vscode.window.showInformationMessage(
+          `Stand-up reminder stopped! - @${getCurrentDateTime()}`
+        );
+      } else {
+        vscode.window.showInformationMessage(
+          'There is no running reminder to stop.'
+        );
+      }
+    }
+  );
+
+  context.subscriptions.push(disposableStart, disposableStop);
 
   vscode.commands.executeCommand('climbr.startReminder');
 }
